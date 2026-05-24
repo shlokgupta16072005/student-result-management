@@ -1,376 +1,217 @@
 const express = require("express");
-
 const router = express.Router();
-
 const Student = require("../models/Student");
-
 const authMiddleware = require("../middleware/authMiddleware");
 
 // ==============================
 // CALCULATE RESULT
 // ==============================
+const calculateResult = (subjects) => {
+  const totalMarks = subjects.reduce(
+    (acc, subject) => acc + Number(subject.marks || 0),
+    0
+  );
 
-const calculateResult = (
-  subjects
-) => {
-
-  const totalMarks =
-    subjects.reduce(
-      (acc, subject) =>
-        acc +
-        Number(
-          subject.marks || 0
-        ),
-      0
-    );
-
-  const percentage =
-    subjects.length > 0
-      ? totalMarks /
-        subjects.length
-      : 0;
+  const percentage = subjects.length > 0 ? totalMarks / subjects.length : 0;
 
   // CURRENT CGPA
-
-  const currentCGPA = (
-    percentage / 9.5
-  ).toFixed(2);
+  const currentCGPA = (percentage / 9.5).toFixed(2);
 
   // AVERAGE CGPA
-
-  const averageCGPA = (
-    Number(currentCGPA) *
-    0.95
-  ).toFixed(2);
+  const averageCGPA = (Number(currentCGPA) * 0.95).toFixed(2);
 
   // GRADE
-
   let grade = "F";
-
   if (percentage >= 90) {
-
     grade = "A+";
-
-  } else if (
-    percentage >= 75
-  ) {
-
+  } else if (percentage >= 75) {
     grade = "A";
-
-  } else if (
-    percentage >= 60
-  ) {
-
+  } else if (percentage >= 60) {
     grade = "B";
-
-  } else if (
-    percentage >= 40
-  ) {
-
+  } else if (percentage >= 40) {
     grade = "C";
   }
 
   // RESULT STATUS
-
-  const resultStatus =
-    percentage >= 40
-      ? "PASS"
-      : "FAIL";
+  const resultStatus = percentage >= 40 ? "PASS" : "FAIL";
 
   return {
-    percentage:
-      percentage.toFixed(2),
-
+    percentage: percentage.toFixed(2),
     currentCGPA,
-
     averageCGPA,
-
     grade,
-
     resultStatus,
   };
 };
 
 // ==============================
-// ADD STUDENT
+// ADD STUDENT (PROTECTED)
 // ==============================
+router.post("/", authMiddleware, async (req, res) => {
+  try {
+    const { name, rollNumber, degree, department, semester, subjects } = req.body;
 
-router.post(
-  "/",
-  authMiddleware,
-  async (req, res) => {
-
-    try {
-
-      const {
-        name,
-        rollNumber,
-        degree,
-        department,
-        semester,
-        subjects,
-      } = req.body;
-
-      // VALIDATION
-
-      if (
-        !name ||
-        !rollNumber ||
-        !degree ||
-        !department ||
-        !semester
-      ) {
-
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message:
-              "Please fill all fields",
-          });
-      }
-
-      // CHECK EXISTING STUDENT
-
-      const existingStudent =
-        await Student.findOne({
-          rollNumber,
-        });
-
-      if (
-        existingStudent
-      ) {
-
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message:
-              "Student already exists",
-          });
-      }
-
-      // CALCULATE RESULT
-
-      const resultData =
-        calculateResult(
-          subjects || []
-        );
-
-      // CREATE STUDENT
-
-      const student =
-        new Student({
-          ...req.body,
-          ...resultData,
-        });
-
-      await student.save();
-
-      res.status(201).json({
-        success: true,
-        message:
-          "Student Added Successfully",
-        student,
-      });
-
-    } catch (error) {
-
-      console.log(error);
-
-      res.status(500).json({
+    // VALIDATION
+    if (!name || !rollNumber || !degree || !department || !semester) {
+      return res.status(400).json({
         success: false,
-        message:
-          "Server Error",
+        message: "Please fill all fields",
       });
     }
-  }
-);
 
-// ==============================
-// GET ALL STUDENTS
-// ==============================
-
-router.get(
-  "/",
-  authMiddleware,
-  async (req, res) => {
-
-    try {
-
-      const students =
-        await Student.find().sort(
-          {
-            createdAt: -1,
-          }
-        );
-
-      res.status(200).json(
-        students
-      );
-
-    } catch (error) {
-
-      console.log(error);
-
-      res.status(500).json({
+    // CHECK EXISTING STUDENT
+    const existingStudent = await Student.findOne({ rollNumber });
+    if (existingStudent) {
+      return res.status(400).json({
         success: false,
-        message:
-          "Server Error",
+        message: "Student already exists",
       });
     }
+
+    // CALCULATE RESULT
+    const resultData = calculateResult(subjects || []);
+
+    // CREATE STUDENT
+    const student = new Student({
+      ...req.body,
+      ...resultData,
+    });
+
+    await student.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Student Added Successfully",
+      student,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
   }
-);
+});
 
 // ==============================
-// GET SINGLE STUDENT
+// GET ALL STUDENTS / SEARCH (PUBLIC)
 // ==============================
+router.get("/", async (req, res) => {
+  try {
+    // Reading standard parameters or fallbacks
+    const search = req.query.search || req.query.query || "";
+    let query = {};
 
-router.get(
-  "/:id",
-  authMiddleware,
-  async (req, res) => {
+    // Handles text strings safely if user types a query
+    if (search.trim() !== "") {
+      query = {
+        $or: [
+          { name: { $regex: search.trim(), $options: "i" } },
+          { rollNumber: { $regex: search.trim(), $options: "i" } }
+        ]
+      };
+    }
 
-    try {
+    const students = await Student.find(query).sort({ createdAt: -1 });
+    res.status(200).json(students);
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+});
 
-      const student =
-        await Student.findById(
-          req.params.id
-        );
+// ==============================
+// GET SINGLE STUDENT (PUBLIC)
+// ==============================
+router.get("/:id", async (req, res) => {
+  try {
+    const student = await Student.findById(req.params.id);
 
-      if (!student) {
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student Not Found",
+      });
+    }
 
-        return res
-          .status(404)
-          .json({
-            success: false,
-            message:
-              "Student Not Found",
-          });
+    res.status(200).json(student);
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+});
+
+// ==============================
+// UPDATE STUDENT (PROTECTED)
+// ==============================
+router.put("/:id", authMiddleware, async (req, res) => {
+  try {
+    const resultData = calculateResult(req.body.subjects || []);
+
+    const updatedStudent = await Student.findByIdAndUpdate(
+      req.params.id,
+      {
+        ...req.body,
+        ...resultData,
+      },
+      {
+        new: true,
+        runValidators: true,
       }
+    );
 
-      res.status(200).json(
-        student
-      );
-
-    } catch (error) {
-
-      console.log(error);
-
-      res.status(500).json({
+    if (!updatedStudent) {
+      return res.status(404).json({
         success: false,
-        message:
-          "Server Error",
+        message: "Student Not Found",
       });
     }
+
+    res.status(200).json({
+      success: true,
+      message: "Student Updated Successfully",
+      updatedStudent,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
   }
-);
+});
 
 // ==============================
-// UPDATE STUDENT
+// DELETE STUDENT (PROTECTED)
 // ==============================
+router.delete("/:id", authMiddleware, async (req, res) => {
+  try {
+    const deletedStudent = await Student.findByIdAndDelete(req.params.id);
 
-router.put(
-  "/:id",
-  authMiddleware,
-  async (req, res) => {
-
-    try {
-
-      const resultData =
-        calculateResult(
-          req.body.subjects ||
-            []
-        );
-
-      const updatedStudent =
-        await Student.findByIdAndUpdate(
-          req.params.id,
-          {
-            ...req.body,
-            ...resultData,
-          },
-          {
-            new: true,
-            runValidators: true,
-          }
-        );
-
-      if (!updatedStudent) {
-
-        return res
-          .status(404)
-          .json({
-            success: false,
-            message:
-              "Student Not Found",
-          });
-      }
-
-      res.status(200).json({
-        success: true,
-        message:
-          "Student Updated Successfully",
-        updatedStudent,
-      });
-
-    } catch (error) {
-
-      console.log(error);
-
-      res.status(500).json({
+    if (!deletedStudent) {
+      return res.status(404).json({
         success: false,
-        message:
-          "Server Error",
+        message: "Student Not Found",
       });
     }
+
+    res.status(200).json({
+      success: true,
+      message: "Student Deleted Successfully",
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
   }
-);
-
-// ==============================
-// DELETE STUDENT
-// ==============================
-
-router.delete(
-  "/:id",
-  authMiddleware,
-  async (req, res) => {
-
-    try {
-
-      const deletedStudent =
-        await Student.findByIdAndDelete(
-          req.params.id
-        );
-
-      if (!deletedStudent) {
-
-        return res
-          .status(404)
-          .json({
-            success: false,
-            message:
-              "Student Not Found",
-          });
-      }
-
-      res.status(200).json({
-        success: true,
-        message:
-          "Student Deleted Successfully",
-      });
-
-    } catch (error) {
-
-      console.log(error);
-
-      res.status(500).json({
-        success: false,
-        message:
-          "Server Error",
-      });
-    }
-  }
-);
+});
 
 module.exports = router;
